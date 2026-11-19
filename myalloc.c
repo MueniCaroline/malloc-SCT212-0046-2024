@@ -22,6 +22,7 @@ typedef struct block {
 static block_t *head = NULL;
 static block_t *tail = NULL;
 static size_t total_heap_bytes = 0;
+static fit_policy_t current_policy = FIT_FIRST;
 
 static inline size_t align_up(size_t n)
 {
@@ -36,6 +37,13 @@ static inline void *payload(block_t *b)
 static inline block_t *header(void *ptr)
 {
     return (block_t *)((char *)ptr - HDR);
+}
+
+void set_policy(fit_policy_t p)
+{
+    if (p == FIT_FIRST || p == FIT_BEST) {
+        current_policy = p;
+    }
 }
 
 static block_t *grow(size_t need)
@@ -75,6 +83,31 @@ static block_t *grow(size_t need)
     return b;
 }
 
+static block_t *find_fit(size_t need)
+{
+    if (current_policy == FIT_BEST) {
+        block_t *best = NULL;
+        for (block_t *curr = head; curr != NULL; curr = curr->next) {
+            if (curr->free && curr->size >= need) {
+                if (best == NULL || curr->size < best->size) {
+                    best = curr;
+                    if (best->size == need) {
+                        break;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    for (block_t *curr = head; curr != NULL; curr = curr->next) {
+        if (curr->free && curr->size >= need) {
+            return curr;
+        }
+    }
+    return NULL;
+}
+
 void *my_malloc(size_t size)
 {
     if (size == 0) {
@@ -82,14 +115,7 @@ void *my_malloc(size_t size)
     }
 
     size_t need = align_up(size);
-    block_t *curr = head;
-
-    while (curr != NULL) {
-        if (curr->free && curr->size >= need) {
-            break;
-        }
-        curr = curr->next;
-    }
+    block_t *curr = find_fit(need);
 
     if (curr == NULL) {
         curr = grow(need);
@@ -114,22 +140,6 @@ void *my_malloc(size_t size)
 
     curr->free = 0;
     return payload(curr);
-}
-
-size_t heap_bytes(void)
-{
-    return total_heap_bytes;
-}
-
-size_t free_bytes(void)
-{
-    size_t total = 0;
-    for (block_t *curr = head; curr != NULL; curr = curr->next) {
-        if (curr->free) {
-            total += curr->size;
-        }
-    }
-    return total;
 }
 
 static void coalesce_forward(block_t *b)
@@ -218,7 +228,6 @@ void *my_realloc(void *ptr, size_t size)
 
     size_t need = align_up(size);
 
-    /* Case 1: Current block already fits (shrink in place if enough remainder) */
     if (b->size >= need) {
         if (b->size >= need + HDR + 16) {
             block_t *rem = (block_t *)((char *)payload(b) + need);
@@ -237,7 +246,6 @@ void *my_realloc(void *ptr, size_t size)
         return ptr;
     }
 
-    /* Case 2: Adjacent next block is free and contiguous with enough combined size */
     if (b->next != NULL && b->next->free &&
         (char *)payload(b) + b->size == (char *)b->next &&
         b->size + HDR + b->next->size >= need) {
@@ -265,7 +273,6 @@ void *my_realloc(void *ptr, size_t size)
         return ptr;
     }
 
-    /* Case 3: Allocate new block, copy existing payload, free old block */
     void *new_ptr = my_malloc(size);
     if (new_ptr == NULL) {
         return NULL;
@@ -275,12 +282,43 @@ void *my_realloc(void *ptr, size_t size)
     return new_ptr;
 }
 
-void dump_heap(void)
+void heap_stats(heap_stats_t *out)
 {
+    if (out == NULL) {
+        return;
+    }
+
+    out->heap_bytes = total_heap_bytes;
+    out->used_bytes = 0;
+    out->free_bytes = 0;
+    out->blocks = 0;
+    out->free_blocks = 0;
+    out->largest_free = 0;
+
+    for (block_t *curr = head; curr != NULL; curr = curr->next) {
+        out->blocks++;
+        if (curr->free) {
+            out->free_bytes += curr->size;
+            out->free_blocks++;
+            if (curr->size > out->largest_free) {
+                out->largest_free = curr->size;
+            }
+        } else {
+            out->used_bytes += curr->size;
+        }
+    }
+}
+
+void heap_dump(void)
+{
+    heap_stats_t st;
+    heap_stats(&st);
+
     char buf[256];
     int n = snprintf(buf, sizeof(buf),
-                     "=== HEAP DUMP (heap_bytes=%zu, free_bytes=%zu) ===\n",
-                     heap_bytes(), free_bytes());
+                     "=== HEAP DUMP (heap=%zu used=%zu free=%zu blocks=%zu free_blocks=%zu largest=%zu) ===\n",
+                     st.heap_bytes, st.used_bytes, st.free_bytes,
+                     st.blocks, st.free_blocks, st.largest_free);
     if (n > 0) {
         write(STDOUT_FILENO, buf, (size_t)n);
     }
@@ -296,6 +334,49 @@ void dump_heap(void)
         }
     }
 
-    const char *footer = "==================================================\n";
+    const char *footer = "===================================================================================\n";
     write(STDOUT_FILENO, footer, strlen(footer));
+}
+
+int heap_check(void)
+{
+    if (head == NULL) {
+        return (tail == NULL && total_heap_bytes == 0) ? 1 : 0;
+    }
+
+    void *brk = sbrk(0);
+    block_t *prev = NULL;
+
+    for (block_t *curr = head; curr != NULL; curr = curr->next) {
+        if (curr->magic != BLOCK_MAGIC) {
+            return 0;
+        }
+        if (curr->free != 0 && curr->free != 1) {
+            return 0;
+        }
+        if (((uintptr_t)payload(curr) % 16) != 0) {
+            return 0;
+        }
+        if (curr->size == 0 || (curr->size % 16) != 0) {
+            return 0;
+        }
+        if (brk != (void *)-1 && (char *)payload(curr) + curr->size > (char *)brk) {
+            return 0;
+        }
+        if (curr->next != NULL) {
+            if (curr->next <= curr) {
+                return 0;
+            }
+            if ((char *)payload(curr) + curr->size > (char *)curr->next) {
+                return 0;
+            }
+            if (curr->free && curr->next->free &&
+                (char *)payload(curr) + curr->size == (char *)curr->next) {
+                return 0;
+            }
+        }
+        prev = curr;
+    }
+
+    return (prev == tail) ? 1 : 0;
 }
