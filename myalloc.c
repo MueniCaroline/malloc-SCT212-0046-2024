@@ -320,7 +320,7 @@ void heap_dump(void)
                      st.heap_bytes, st.used_bytes, st.free_bytes,
                      st.blocks, st.free_blocks, st.largest_free);
     if (n > 0) {
-        write(STDOUT_FILENO, buf, (size_t)n);
+        (void)write(STDOUT_FILENO, buf, (size_t)n);
     }
 
     size_t idx = 0;
@@ -330,12 +330,12 @@ void heap_dump(void)
                      idx, (void *)curr, payload(curr), curr->size,
                      curr->free ? "FREE" : "USED");
         if (n > 0) {
-            write(STDOUT_FILENO, buf, (size_t)n);
+            (void)write(STDOUT_FILENO, buf, (size_t)n);
         }
     }
 
     const char *footer = "===================================================================================\n";
-    write(STDOUT_FILENO, footer, strlen(footer));
+    (void)write(STDOUT_FILENO, footer, strlen(footer));
 }
 
 int heap_check(void)
