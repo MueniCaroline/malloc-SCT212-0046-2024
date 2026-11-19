@@ -274,3 +274,28 @@ void *my_realloc(void *ptr, size_t size)
     my_free(ptr);
     return new_ptr;
 }
+
+void dump_heap(void)
+{
+    char buf[256];
+    int n = snprintf(buf, sizeof(buf),
+                     "=== HEAP DUMP (heap_bytes=%zu, free_bytes=%zu) ===\n",
+                     heap_bytes(), free_bytes());
+    if (n > 0) {
+        write(STDOUT_FILENO, buf, (size_t)n);
+    }
+
+    size_t idx = 0;
+    for (block_t *curr = head; curr != NULL; curr = curr->next, idx++) {
+        n = snprintf(buf, sizeof(buf),
+                     "  [%zu] hdr=%p payload=%p size=%zu status=%s\n",
+                     idx, (void *)curr, payload(curr), curr->size,
+                     curr->free ? "FREE" : "USED");
+        if (n > 0) {
+            write(STDOUT_FILENO, buf, (size_t)n);
+        }
+    }
+
+    const char *footer = "==================================================\n";
+    write(STDOUT_FILENO, footer, strlen(footer));
+}
