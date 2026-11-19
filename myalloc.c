@@ -74,3 +74,60 @@ static block_t *grow(size_t need)
 
     return b;
 }
+
+void *my_malloc(size_t size)
+{
+    if (size == 0) {
+        return NULL;
+    }
+
+    size_t need = align_up(size);
+    block_t *curr = head;
+
+    while (curr != NULL) {
+        if (curr->free && curr->size >= need) {
+            break;
+        }
+        curr = curr->next;
+    }
+
+    if (curr == NULL) {
+        curr = grow(need);
+        if (curr == NULL) {
+            return NULL;
+        }
+    }
+
+    if (curr->size >= need + HDR + 16) {
+        block_t *rem = (block_t *)((char *)payload(curr) + need);
+        rem->size = curr->size - need - HDR;
+        rem->next = curr->next;
+        rem->free = 1;
+        rem->magic = BLOCK_MAGIC;
+
+        curr->size = need;
+        curr->next = rem;
+        if (curr == tail) {
+            tail = rem;
+        }
+    }
+
+    curr->free = 0;
+    return payload(curr);
+}
+
+size_t heap_bytes(void)
+{
+    return total_heap_bytes;
+}
+
+size_t free_bytes(void)
+{
+    size_t total = 0;
+    for (block_t *curr = head; curr != NULL; curr = curr->next) {
+        if (curr->free) {
+            total += curr->size;
+        }
+    }
+    return total;
+}
