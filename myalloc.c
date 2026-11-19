@@ -180,3 +180,97 @@ void my_free(void *ptr)
         coalesce_forward(prev);
     }
 }
+
+void *my_calloc(size_t nmemb, size_t size)
+{
+    if (nmemb == 0 || size == 0) {
+        return NULL;
+    }
+    if (nmemb > SIZE_MAX / size) {
+        return NULL;
+    }
+
+    size_t total = nmemb * size;
+    void *ptr = my_malloc(total);
+    if (ptr != NULL) {
+        memset(ptr, 0, total);
+    }
+    return ptr;
+}
+
+void *my_realloc(void *ptr, size_t size)
+{
+    if (ptr == NULL) {
+        return my_malloc(size);
+    }
+    if (size == 0) {
+        my_free(ptr);
+        return NULL;
+    }
+    if (head == NULL || (uintptr_t)ptr % 16 != 0) {
+        return NULL;
+    }
+
+    block_t *b = header(ptr);
+    if (b < head || b > tail || b->magic != BLOCK_MAGIC || b->free) {
+        return NULL;
+    }
+
+    size_t need = align_up(size);
+
+    /* Case 1: Current block already fits (shrink in place if enough remainder) */
+    if (b->size >= need) {
+        if (b->size >= need + HDR + 16) {
+            block_t *rem = (block_t *)((char *)payload(b) + need);
+            rem->size = b->size - need - HDR;
+            rem->next = b->next;
+            rem->free = 1;
+            rem->magic = BLOCK_MAGIC;
+
+            b->size = need;
+            b->next = rem;
+            if (b == tail) {
+                tail = rem;
+            }
+            coalesce_forward(rem);
+        }
+        return ptr;
+    }
+
+    /* Case 2: Adjacent next block is free and contiguous with enough combined size */
+    if (b->next != NULL && b->next->free &&
+        (char *)payload(b) + b->size == (char *)b->next &&
+        b->size + HDR + b->next->size >= need) {
+        block_t *nxt = b->next;
+        b->size += HDR + nxt->size;
+        b->next = nxt->next;
+        nxt->magic = 0;
+        if (nxt == tail) {
+            tail = b;
+        }
+
+        if (b->size >= need + HDR + 16) {
+            block_t *rem = (block_t *)((char *)payload(b) + need);
+            rem->size = b->size - need - HDR;
+            rem->next = b->next;
+            rem->free = 1;
+            rem->magic = BLOCK_MAGIC;
+
+            b->size = need;
+            b->next = rem;
+            if (b == tail) {
+                tail = rem;
+            }
+        }
+        return ptr;
+    }
+
+    /* Case 3: Allocate new block, copy existing payload, free old block */
+    void *new_ptr = my_malloc(size);
+    if (new_ptr == NULL) {
+        return NULL;
+    }
+    memcpy(new_ptr, ptr, b->size);
+    my_free(ptr);
+    return new_ptr;
+}
