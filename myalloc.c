@@ -131,3 +131,52 @@ size_t free_bytes(void)
     }
     return total;
 }
+
+static void coalesce_forward(block_t *b)
+{
+    while (b->next != NULL && b->next->free &&
+           (char *)payload(b) + b->size == (char *)b->next) {
+        block_t *nxt = b->next;
+        b->size += HDR + nxt->size;
+        b->next = nxt->next;
+        nxt->magic = 0;
+        if (nxt == tail) {
+            tail = b;
+        }
+    }
+}
+
+void my_free(void *ptr)
+{
+    if (ptr == NULL || head == NULL) {
+        return;
+    }
+
+    if ((uintptr_t)ptr % 16 != 0) {
+        return;
+    }
+
+    block_t *b = header(ptr);
+    if (b < head || b > tail) {
+        return;
+    }
+
+    block_t *prev = NULL;
+    block_t *curr = head;
+    while (curr != NULL && curr != b) {
+        prev = curr;
+        curr = curr->next;
+    }
+
+    if (curr != b || b->magic != BLOCK_MAGIC || b->free) {
+        return;
+    }
+
+    b->free = 1;
+    coalesce_forward(b);
+
+    if (prev != NULL && prev->free &&
+        (char *)payload(prev) + prev->size == (char *)b) {
+        coalesce_forward(prev);
+    }
+}
