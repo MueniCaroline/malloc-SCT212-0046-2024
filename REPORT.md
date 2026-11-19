@@ -7,7 +7,7 @@
 
 Both placement policies were tested on the exact same workload of 50,000 random allocations and frees (block sizes between 1 and 4096 bytes, seeded with `23052026`), and timed alongside the standard C library (`glibc`) allocator using `clock_gettime()`.
 
-| Allocator / Policy | Time (ms) | `heap_bytes` | `free_bytes` | `free_blocks` | `largest_free` | External Fragmentation ($1 - \frac{\text{largest\_free}}{\text{free\_bytes}}$) |
+| Allocator / Policy | Time (ms) | `heap_bytes` | `free_bytes` | `free_blocks` | `largest_free` | External Fragmentation (`1 - largest_free / free_bytes`) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **`FIT_FIRST`** | 559.235 | 1,376,928 | 314,856 | 214 | 174,448 | 0.4456 |
 | **`FIT_BEST`** | 1,845.008 | 1,311,360 | 249,984 | 160 | 107,600 | 0.5693 |
