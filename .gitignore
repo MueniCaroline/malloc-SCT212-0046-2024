@@ -1,4 +1,4 @@
 *.o
 test_myalloc
-t_asan
 bench
+t_asan
